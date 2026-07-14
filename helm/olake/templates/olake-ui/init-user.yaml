@@ -1,6 +1,7 @@
 {{- /*
 TODO: Remove the conditional TTL logic in a future release (e.g. v1.0.0).
 */ -}}
+{{- if .Values.olakeUI.initUser.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -116,3 +117,4 @@ spec:
   {{- if not .Values.useStandardResources }}
   ttlSecondsAfterFinished: 3600
   {{- end }}
+{{- end }}
