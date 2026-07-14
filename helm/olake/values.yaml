@@ -214,6 +214,8 @@ olakeUI:
 
   # -- Initialization user configuration
   initUser:
+    enabled: true
+
     # -- Use an existing Kubernetes secret for the admin user credentials.
     # If you provide a secret name, the job will use it instead of the direct values below.
     # The secret must contain keys for username, password, and email.
@@ -693,6 +695,10 @@ fusion:
 
   # --- Optimizer configuration (Spark-on-Kubernetes)
   optimizer:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
     spark:
       # Desired Spark optimizer parallelism.
       desiredParallelism: 3
@@ -703,6 +709,11 @@ fusion:
         repository: olakego/fusion-spark
         tag: latest
         pullPolicy: Always
+
+      executor:
+        nodeSelector: {}
+        tolerations: []
+        affinity: {}
 
       # Extra Spark config entries (map of key->value).
       # Example:
