@@ -693,6 +693,10 @@ fusion:
 
   # --- Optimizer configuration (Spark-on-Kubernetes)
   optimizer:
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+
     spark:
       # Desired Spark optimizer parallelism.
       desiredParallelism: 3
@@ -703,6 +707,11 @@ fusion:
         repository: olakego/fusion-spark
         tag: latest
         pullPolicy: Always
+
+      executor:
+        nodeSelector: {}
+        tolerations: []
+        affinity: {}
 
       # Extra Spark config entries (map of key->value).
       # Example:

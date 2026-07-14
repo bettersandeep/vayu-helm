@@ -317,8 +317,11 @@ spec:
               mountPath: /usr/local/amoro/conf/config.yaml
               subPath: config.yaml
             - name: fusion-config
-              mountPath: /usr/local/amoro/conf/pod-template.yaml
-              subPath: pod-template.yaml
+              mountPath: /usr/local/amoro/conf/driver-pod-template.yaml
+              subPath: driver-pod-template.yaml
+            - name: fusion-config
+              mountPath: /usr/local/amoro/conf/executor-pod-template.yaml
+              subPath: executor-pod-template.yaml
             - name: spark-binaries
               mountPath: /opt/spark
             - name: shared-storage
