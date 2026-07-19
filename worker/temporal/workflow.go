@@ -1,6 +1,7 @@
 package temporal
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -100,6 +101,7 @@ func RunSyncWorkflow(ctx workflow.Context, args interface{}) (result *types.Exec
 			RetryPolicy:         SyncRetryPolicy,
 		}
 		newCtx = workflow.WithActivityOptions(newCtx, cleanupOtions)
+		req.SyncFailed = err != nil
 		cleanupErr := workflow.ExecuteActivity(newCtx, cleanupActivity, req).Get(newCtx, nil)
 		if cleanupErr != nil {
 			if err != nil {
@@ -138,6 +140,13 @@ func RunSyncWorkflow(ctx workflow.Context, args interface{}) (result *types.Exec
 			ProjectID:    req.ProjectID,
 			LastRunTime:  lastRunTime,
 			ErrorMessage: err.Error(),
+		}
+		// Extract structured error classification from the Temporal ApplicationError.
+		// SyncActivity sets the error type to the raw k8s Reason string (e.g. "OOMKilled")
+		// so the webhook formatter can produce a human-readable, actionable message.
+		var appErr *temporal.ApplicationError
+		if errors.As(err, &appErr) {
+			webhookArgs.ErrorType = appErr.Type()
 		}
 		workflow.ExecuteActivity(webhookCtx, SendWebhookNotificationActivity, webhookArgs)
 		return nil, err
