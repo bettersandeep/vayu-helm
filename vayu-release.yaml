@@ -1,0 +1,21 @@
+# Vayu platform release manifest
+#
+# Pins the exact component versions validated together as one deployable set.
+# Promote environments by platform version, not by bumping components individually.
+# Each component tag is `vayu-<X.Y.Z>+olake<upstream-base>`; the git tag's `+`
+# maps to `-` for container image tags (Docker tags cannot contain `+`),
+# e.g. git `vayu-0.1.0+olake0.8.2` -> image `vayu-0.1.0-olake0.8.2`.
+
+vayuPlatform: 0.1.0
+
+components:
+  driver:  vayu-0.1.0+olake0.8.2    # vayu (olake core / connectors)
+  ui:      vayu-0.1.0+olake0.4.9    # vayu-ui
+  worker:  vayu-0.1.0+olake0.3.10   # vayu-helm (worker + chart)
+  fusion:  vayu-0.1.0+olake0.1.3    # vayu-fusion (amoro)
+
+upstreamBase:
+  olake:        v0.8.2
+  olake-ui:     v0.4.9
+  olake-helm:   v0.3.10
+  olake-fusion: v0.1.3
