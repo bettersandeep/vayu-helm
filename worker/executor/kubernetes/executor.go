@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -30,15 +31,17 @@ type KubernetesExecutor struct {
 }
 
 type KubernetesConfig struct {
-	Namespace          string
-	PVCName            string
-	ServiceAccount     string
-	JobServiceAccount  string
-	SecretKey          string
-	BasePath           string
-	WorkerIdentity     string
-	SecurityContext    *corev1.PodSecurityContext
-	JobPodAnnotations  map[string]string
+	Namespace           string
+	PVCName             string
+	ServiceAccount      string
+	JobServiceAccount   string
+	SecretKey           string
+	BasePath            string
+	WorkerIdentity      string
+	SecurityContext     *corev1.PodSecurityContext
+	JobPodAnnotations   map[string]string
+	JobPodCPURequest    string
+	JobPodMemoryRequest string
 }
 
 func NewKubernetesExecutor(ctx context.Context) (*KubernetesExecutor, error) {
@@ -67,6 +70,8 @@ func NewKubernetesExecutor(ctx context.Context) (*KubernetesExecutor, error) {
 	jobServiceAccount := viper.GetString(constants.EnvJobServiceAccountName)
 	secretKey := viper.GetString(constants.EnvSecretKey)
 	basePath := utils.GetConfigDir()
+	jobPodCPURequest := viper.GetString(constants.EnvJobPodCPURequest)
+	jobPodMemoryRequest := viper.GetString(constants.EnvJobPodMemoryRequest)
 
 	// Parse security context JSON if available
 	var securityContext *corev1.PodSecurityContext
@@ -103,15 +108,17 @@ func NewKubernetesExecutor(ctx context.Context) (*KubernetesExecutor, error) {
 		namespace:     namespace,
 		configWatcher: watcher,
 		config: &KubernetesConfig{
-			Namespace:         namespace,
-			PVCName:           pvcName,
-			ServiceAccount:    serviceAccount,
-			JobServiceAccount: jobServiceAccount,
-			SecretKey:         secretKey,
-			BasePath:          basePath,
-			WorkerIdentity:    workerIdenttity,
-			SecurityContext:   securityContext,
-			JobPodAnnotations: jobPodAnnotations,
+			Namespace:           namespace,
+			PVCName:             pvcName,
+			ServiceAccount:      serviceAccount,
+			JobServiceAccount:   jobServiceAccount,
+			SecretKey:           secretKey,
+			BasePath:            basePath,
+			WorkerIdentity:      workerIdenttity,
+			SecurityContext:     securityContext,
+			JobPodAnnotations:   jobPodAnnotations,
+			JobPodCPURequest:    jobPodCPURequest,
+			JobPodMemoryRequest: jobPodMemoryRequest,
 		},
 	}, nil
 }
@@ -140,6 +147,24 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, req *types.ExecutionRe
 
 	if err := k.waitForPodCompletion(ctx, podSpec.Name, req.Timeout, req.HeartbeatFunc); err != nil {
 		log.Error("pod failed to complete", "podName", podSpec.Name, "error", err)
+
+		// Attempt to fetch pod logs even on failure so the error report includes
+		// recent output. Use a fresh background context with a short timeout because
+		// the main ctx may already be cancelled (e.g. Temporal heartbeat timeout).
+		// This is best-effort: if the pod was OOMKilled its stdout may be empty or
+		// truncated, in which case TerminationMessageFallbackToLogsOnError will have
+		// already captured the last bytes into PodFailureError.Message.
+		logCtx, cancelLog := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelLog()
+		if podLogs, logErr := k.getPodLogs(logCtx, podSpec.Name); logErr == nil {
+			var podErr *constants.PodFailureError
+			if errors.As(err, &podErr) {
+				podErr.PodLogs = podLogs
+			}
+		} else {
+			log.Warn("could not fetch pod logs after failure", "podName", podSpec.Name, "error", logErr)
+		}
+
 		return "", err
 	}
 

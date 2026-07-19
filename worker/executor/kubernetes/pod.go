@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -45,36 +47,49 @@ func (k *KubernetesExecutor) waitForPodCompletion(ctx context.Context, podName s
 
 		// Check if pod failed
 		if pod.Status.Phase == corev1.PodFailed {
-			// Check if this is a retryable infrastructure failure
-			retryableReasons := []string{"ImagePullBackOff", "ErrImagePull"}
+			// Retryable infrastructure failures — keep polling rather than surfacing as errors.
+			// "Evicted" = node memory/disk pressure eviction; will resolve on reschedule.
+			retryableReasons := []string{"ImagePullBackOff", "ErrImagePull", "Evicted"}
 			if slices.Contains(retryableReasons, pod.Status.Reason) {
 				log.Warn("pod not running, continuing to poll", "podName", podName, "reason", pod.Status.Reason, "message", pod.Status.Message)
 				continue
 			}
 
+			// Build a structured PodFailureError so callers can inspect the exact
+			// failure reason (OOMKilled, Error, DeadlineExceeded, etc.) without
+			// string-parsing. It wraps ErrExecutionFailed via Unwrap() so existing
+			// errors.Is(err, ErrExecutionFailed) checks remain valid.
+			//
 			// Common exit codes:
-			// - Exit 0: Success
-			// - Exit 1: General application error
-			// - Exit 2: Misuse of shell command or manual termination
+			// - Exit 0:   Success
+			// - Exit 1:   General application error
+			// - Exit 2:   Misuse of shell command
 			// - Exit 137: SIGKILL (OOMKilled or manual kill)
 			// - Exit 143: SIGTERM (graceful termination)
-			var containerInfo string
+			podErr := &constants.PodFailureError{PodName: podName}
 			if len(pod.Status.ContainerStatuses) > 0 {
 				status := pod.Status.ContainerStatuses[0]
 				if status.State.Terminated != nil {
 					term := status.State.Terminated
-					containerInfo = fmt.Sprintf("exit code: %d, reason: %s", term.ExitCode, term.Reason)
-				} else {
-					// The only other two ContainerState options are Waiting and Running, so if it's not Terminated, it must be one of those
-					// refer: https://pkg.go.dev/k8s.io/api/core/v1#ContainerState
-					// Not expected as the pod is in Failed state with only one container, the container shouldnot be in Waiting or Running state, but logging for debugging purposes
-					containerInfo = fmt.Sprintf("container not terminated; reason: %s, message: %s", pod.Status.Reason, pod.Status.Message)
+					podErr.ExitCode = term.ExitCode
+					podErr.Reason = term.Reason
+					// term.Message is populated by TerminationMessageFallbackToLogsOnError
+					// when the process crashes without writing to /dev/termination-log.
+					podErr.Message = term.Message
 				}
-			} else {
-				containerInfo = fmt.Sprintf("containerStatus not found; reason: %s, message: %s", pod.Status.Reason, pod.Status.Message)
+				// The only other two ContainerState options are Waiting and Running, so if it's not
+				// Terminated the fallback below picks up the pod-level reason/message instead.
+				// refer: https://pkg.go.dev/k8s.io/api/core/v1#ContainerState
 			}
-			log.Error("pod failed", "podName", podName, "containerInfo", containerInfo)
-			return fmt.Errorf("%w: pod %s failed (%s)", constants.ErrExecutionFailed, podName, containerInfo)
+			// Fallback: use pod-level reason/message if container status was unavailable
+			if podErr.Reason == "" {
+				podErr.Reason = pod.Status.Reason
+			}
+			if podErr.Message == "" {
+				podErr.Message = pod.Status.Message
+			}
+			log.Error("pod failed", "podName", podName, "reason", podErr.Reason, "exitCode", podErr.ExitCode)
+			return podErr
 		}
 
 		// Wait before checking again, with responsive cancellation
@@ -138,6 +153,56 @@ func (k *KubernetesExecutor) cleanupPod(ctx context.Context, podName string) err
 	return nil
 }
 
+func (k *KubernetesExecutor) getJavaHeapOptions() string {
+	memRequest := k.config.JobPodMemoryRequest
+	if memRequest == "" {
+		return "-Xmx4g"
+	}
+
+	// Convert the memory request to mebibytes (Mi) regardless of the suffix used.
+	// Previously only "Gi" and "G" were handled; "Mi" and "M" fell through to the
+	// memGB <= 0 branch and incorrectly returned "-Xmx4g" even for small pods
+	// (e.g. the chart default of "256Mi" would get a 4 GB heap, guaranteeing OOM).
+	memMi := 0
+	switch {
+	case strings.HasSuffix(memRequest, "Gi"):
+		val, err := strconv.Atoi(strings.TrimSuffix(memRequest, "Gi"))
+		if err == nil {
+			memMi = val * 1024
+		}
+	case strings.HasSuffix(memRequest, "G"):
+		val, err := strconv.Atoi(strings.TrimSuffix(memRequest, "G"))
+		if err == nil {
+			memMi = val * 1024
+		}
+	case strings.HasSuffix(memRequest, "Mi"):
+		val, err := strconv.Atoi(strings.TrimSuffix(memRequest, "Mi"))
+		if err == nil {
+			memMi = val
+		}
+	case strings.HasSuffix(memRequest, "M"):
+		val, err := strconv.Atoi(strings.TrimSuffix(memRequest, "M"))
+		if err == nil {
+			memMi = val
+		}
+	}
+
+	if memMi <= 0 {
+		return "-Xmx4g"
+	}
+
+	// Keep the original formula: reserve 4 GB for JVM non-heap overhead (metaspace,
+	// code cache, thread stacks, GC bookkeeping) and give the rest to the heap.
+	// Minimum heap is 1 GB so the JVM can start on pods smaller than 5 Gi.
+	memGB := memMi / 1024
+	heapGB := memGB - 4
+	if heapGB < 1 {
+		heapGB = 1
+	}
+
+	return fmt.Sprintf("-Xmx%dg", heapGB)
+}
+
 func (k *KubernetesExecutor) CreatePodSpec(req *types.ExecutionRequest, workDir, imageName string) *corev1.Pod {
 	subDir := filepath.Base(workDir)
 
@@ -184,6 +249,12 @@ func (k *KubernetesExecutor) CreatePodSpec(req *types.ExecutionRequest, workDir,
 					Image:   imageName,
 					Command: []string{},
 					Args:    req.Args,
+					// FallbackToLogsOnError makes Kubernetes write the last bytes of
+					// stdout/stderr into ContainerStateTerminated.Message when the
+					// process exits without writing to /dev/termination-log.
+					// This is the only way to capture any context from an OOMKilled
+					// container since the kernel kills the process before it can log.
+					TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 					VolumeMounts: []corev1.VolumeMount{
 						{
 							Name:      "job-storage",
@@ -193,8 +264,18 @@ func (k *KubernetesExecutor) CreatePodSpec(req *types.ExecutionRequest, workDir,
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceMemory: k.parseQuantity("256Mi"),
-							corev1.ResourceCPU:    k.parseQuantity("100m"),
+							corev1.ResourceCPU: k.parseQuantity(func() string {
+								if k.config.JobPodCPURequest != "" {
+									return k.config.JobPodCPURequest
+								}
+								return "100m"
+							}()),
+							corev1.ResourceMemory: k.parseQuantity(func() string {
+								if k.config.JobPodMemoryRequest != "" {
+									return k.config.JobPodMemoryRequest
+								}
+								return "256Mi"
+							}()),
 						},
 						// No limits for flexibility
 					},
@@ -206,6 +287,10 @@ func (k *KubernetesExecutor) CreatePodSpec(req *types.ExecutionRequest, workDir,
 						{
 							Name:  "OLAKE_SECRET_KEY",
 							Value: k.config.SecretKey,
+						},
+						{
+							Name:  "JAVA_TOOL_OPTIONS",
+							Value: k.getJavaHeapOptions(),
 						},
 					},
 					EnvFrom: []corev1.EnvFromSource{
@@ -231,6 +316,13 @@ func (k *KubernetesExecutor) CreatePodSpec(req *types.ExecutionRequest, workDir,
 				},
 			},
 		},
+	}
+
+	// Hand the drivers-project sentry DSN to the connector as SENTRY_DSN so
+	// connector errors report to the drivers project, not the worker's.
+	if dsn := os.Getenv("SENTRY_DSN_DRIVERS"); dsn != "" {
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+			corev1.EnvVar{Name: "SENTRY_DSN", Value: dsn})
 	}
 
 	// Set ServiceAccountName only if configured (non-empty)

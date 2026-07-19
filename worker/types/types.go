@@ -44,7 +44,16 @@ type WebhookNotificationArgs struct {
 	JobID        int
 	ProjectID    string
 	LastRunTime  time.Time
-	ErrorMessage string
+	ErrorMessage string // full error string from err.Error() — survives the Temporal boundary
+
+	// Structured fields populated when the error originates from a Kubernetes pod failure.
+	// ErrorType is the raw k8s ContainerStateTerminated.Reason ("OOMKilled", "Error", etc.)
+	// or "ApplicationError" for non-pod errors.  An empty string means unknown.
+	ErrorType string
+	// ExitCode is the container exit code: 137=OOMKill/SIGKILL, 1=app error, 143=SIGTERM.
+	ExitCode int32
+	// PodName is the name of the Kubernetes pod that failed.
+	PodName string
 }
 
 type Result struct {
