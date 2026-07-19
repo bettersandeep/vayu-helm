@@ -98,6 +98,15 @@ spec:
           containerPort: {{ .Values.olakeUI.env.HTTP_PORT | default "8000" | int }}
           protocol: TCP
         env:
+        {{- if .Values.global.sentry.existingSecret }}
+        - name: SENTRY_DSN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.sentry.existingSecret }}
+              key: olakeui
+        - name: SENTRY_RELEASE
+          value: {{ .Values.olakeUI.image.tag | quote }}
+        {{- end }}
         - name: PERSISTENT_DIR
           value: "/tmp/olake-config"
         {{- with first .Values.global.imagePullSecrets }}
@@ -198,7 +207,7 @@ spec:
           "timeoutSeconds" 5
           "failureThreshold" 3
           "successThreshold" 1
-          "exec" (dict "command" (list "/bin/sh" "-c" (printf "timeout 3 sh -c 'echo ok > /tmp/olake-config/.healthcheck-ui' && nc -z localhost %s" (.Values.olakeUI.env.HTTP_PORT | default "8000"))))
+          "exec" (dict "command" (list "/bin/sh" "-c" (printf "echo ok > /tmp/olake-config/.healthcheck-ui && nc -z localhost %s" (.Values.olakeUI.env.HTTP_PORT | default "8000"))))
         }}
         {{- $readinessProbe := mergeOverwrite $defaultReadinessProbe (.Values.olakeUI.readinessProbe | default dict) }}
         readinessProbe:
@@ -209,7 +218,7 @@ spec:
           "timeoutSeconds" 10
           "failureThreshold" 3
           "successThreshold" 1
-          "exec" (dict "command" (list "/bin/sh" "-c" (printf "timeout 3 sh -c 'echo ok > /tmp/olake-config/.healthcheck-ui' && nc -z localhost %s" (.Values.olakeUI.env.HTTP_PORT | default "8000"))))
+          "exec" (dict "command" (list "/bin/sh" "-c" (printf "echo ok > /tmp/olake-config/.healthcheck-ui && nc -z localhost %s" (.Values.olakeUI.env.HTTP_PORT | default "8000"))))
         }}
         {{- $livenessProbe := mergeOverwrite $defaultLivenessProbe (.Values.olakeUI.livenessProbe | default dict) }}
         livenessProbe:

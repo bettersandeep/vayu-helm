@@ -34,6 +34,14 @@ global:
   #     - name: "docker-hub-secret"
   imagePullSecrets: []
 
+  # -- Sentry error monitoring (self-hosted). When existingSecret is set, the
+  # chart injects SENTRY_DSN (per-component key) and SENTRY_RELEASE into the
+  # ui, worker, and fusion pods. Keys expected in the secret:
+  # olake, olake-worker, olakeui, olake-fusion.
+  sentry:
+    existingSecret: ""
+
+
   # -- Global pod annotations applied to all Deployment pods and to activity pods
   # (connector Job pods spawned by olake-workers) and Fusion Spark pods.
   # Useful for service mesh sidecar injection (Istio, Linkerd) or other admission webhooks.
@@ -78,7 +86,7 @@ global:
   # -- Service account configuration for job pods created by olake-workers
   # Used for cloud provider IAM integration (AWS IRSA, GCP Workload Identity, Azure Workload Identity)
   jobServiceAccount:
-    create: false
+    create: true
     name: ""
 
     # Used for cloud provider IAM role association
@@ -302,6 +310,33 @@ olakeWorker:
 
     # -- Service account annotations
     annotations: {}
+
+  # -- Resource requests for sync/discover/check job pods created by the worker
+  # These control the resources of the short-lived connector pods (e.g. sync-123),
+  # NOT the worker deployment itself (use `resources` above for that).
+  # Defaults: cpu=100m, memory=256Mi if not set.
+  # Example:
+  #   jobPodResources:
+  #     cpu: "500m"
+  #     memory: "1Gi"
+  jobPodResources: {}
+
+  # -- Prometheus metrics configuration
+  metrics:
+    serviceMonitor:
+      # -- Enable creation of a Prometheus Operator ServiceMonitor for the worker.
+      # Requires the Prometheus Operator CRDs to be installed in the cluster.
+      # The worker exposes Prometheus text format at :8090/metrics, which includes:
+      #   olake_job_runs_total{job_id, job_name, connector_type, status}
+      #   olake_job_failures_total{job_id, job_name, connector_type, error_type}
+      #   olake_sync_duration_seconds{job_id, job_name, connector_type, status} (histogram)
+      #   olake_records_synced_total{job_id, job_name, connector_type}
+      # plus standard Go runtime metrics (goroutines, GC, memory).
+      enabled: false
+      # -- How often Prometheus scrapes the /metrics endpoint
+      interval: 30s
+      # -- Per-scrape timeout (must be less than interval)
+      scrapeTimeout: 10s
 
   # -- OLake Worker application configuration
   config:
@@ -645,7 +680,7 @@ fusion:
   image:
     repository: olakego/fusion
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
   # --- Fusion pod resource requirements (optional overrides)
   # Example:
@@ -702,7 +737,7 @@ fusion:
       image:
         repository: olakego/fusion-spark
         tag: latest
-        pullPolicy: IfNotPresent
+        pullPolicy: Always
 
       # Extra Spark config entries (map of key->value).
       # Example:
