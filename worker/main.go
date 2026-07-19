@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/datazip-inc/olake-helm/worker/constants"
 	"github.com/datazip-inc/olake-helm/worker/constants/config"
@@ -17,6 +18,7 @@ import (
 	"github.com/datazip-inc/olake-helm/worker/types"
 	"github.com/datazip-inc/olake-helm/worker/utils"
 	"github.com/datazip-inc/olake-helm/worker/utils/logger"
+	"github.com/datazip-inc/olake-helm/worker/utils/telemetry"
 	"github.com/spf13/viper"
 )
 
@@ -33,6 +35,10 @@ func main() {
 
 	// Initialize logger
 	logger.Init()
+
+	// Initialize sentry error monitoring (no-op when SENTRY_DSN is unset)
+	telemetry.InitSentry()
+	defer telemetry.FlushSentry(2 * time.Second)
 
 	logger.Infof("starting OLake worker")
 	logger.Infof("executor environment: %s", utils.GetExecutorEnvironment())
