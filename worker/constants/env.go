@@ -58,4 +58,8 @@ const (
 
 	// activity pod annotations
 	EnvJobPodAnnotations = "OLAKE_JOB_POD_ANNOTATIONS"
+
+	// job pod resources
+	EnvJobPodCPURequest    = "JOB_POD_CPU_REQUEST"
+	EnvJobPodMemoryRequest = "JOB_POD_MEMORY_REQUEST"
 )

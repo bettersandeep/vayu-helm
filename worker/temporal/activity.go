@@ -2,12 +2,19 @@ package temporal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/datazip-inc/olake-helm/worker/constants"
 	"github.com/datazip-inc/olake-helm/worker/database"
 	"github.com/datazip-inc/olake-helm/worker/executor"
+	"github.com/datazip-inc/olake-helm/worker/metrics"
 	"github.com/datazip-inc/olake-helm/worker/types"
 	"github.com/datazip-inc/olake-helm/worker/utils"
 	"github.com/datazip-inc/olake-helm/worker/utils/logger"
@@ -66,6 +73,12 @@ func (a *Activity) SyncActivity(ctx context.Context, req *types.ExecutionRequest
 	jobDetails, err := a.db.GetJobData(ctx, req.JobID)
 	if err != nil {
 		errMsg := fmt.Sprintf("failed to get job data: %s", err)
+		// job_name is unavailable here: fetching job data is what failed.
+		telemetry.CaptureError(err, map[string]string{
+			"connector_type": req.ConnectorType,
+			"job_id":         strconv.Itoa(req.JobID),
+			"error_type":     "DatabaseError",
+		}, nil)
 		return nil, temporal.NewNonRetryableApplicationError(errMsg, "DatabaseError", err)
 	}
 
@@ -86,7 +99,9 @@ func (a *Activity) SyncActivity(ctx context.Context, req *types.ExecutionRequest
 	// Send telemetry event - "sync started"
 	telemetry.SendEvent(req.JobID, utils.GetExecutorEnvironment(), req.WorkflowID, telemetry.TelemetryEventStarted)
 
+	syncStart := time.Now()
 	result, err := a.executor.Execute(ctx, req)
+	syncDuration := time.Since(syncStart).Seconds()
 	if err != nil {
 		// CRITICAL: Check if error is because context was cancelled
 		if ctx.Err() != nil {
@@ -94,15 +109,62 @@ func (a *Activity) SyncActivity(ctx context.Context, req *types.ExecutionRequest
 			return nil, temporal.NewCanceledError("sync activity cancelled")
 		}
 
-		if errors.Is(err, constants.ErrExecutionFailed) {
-			telemetry.SendEvent(req.JobID, utils.GetExecutorEnvironment(), req.WorkflowID, telemetry.TelemetryEventFailed)
-			return nil, temporal.NewNonRetryableApplicationError("execution failed", "ExecutionFailed", err)
+		telemetry.SendEvent(req.JobID, utils.GetExecutorEnvironment(), req.WorkflowID, telemetry.TelemetryEventFailed)
+
+		// Classify the error type using the structured PodFailureError if available.
+		// The type string becomes appErr.Type() in the workflow, which is then forwarded
+		// to the webhook. Using the raw k8s Reason string means any future Kubernetes
+		// termination reason (beyond the ones we know today) is automatically carried
+		// through without requiring code changes.
+		errorType := "ApplicationError"
+		var podErr *constants.PodFailureError
+		if errors.As(err, &podErr) {
+			if podErr.Reason != "" {
+				errorType = podErr.Reason // e.g. "OOMKilled", "Error", "DeadlineExceeded"
+			} else {
+				errorType = "UnknownPodFailure"
+			}
 		}
 
-		log.Error("sync command failed", "error", err)
-		telemetry.SendEvent(req.JobID, utils.GetExecutorEnvironment(), req.WorkflowID, telemetry.TelemetryEventFailed)
-		return nil, temporal.NewNonRetryableApplicationError("execution failed", "ExecutionFailed", err)
+		// Increment Prometheus counters so failures are observable in Grafana.
+		// jobDetails is guaranteed non-nil here (fetched above, error returned early).
+		jobIDStr := strconv.Itoa(req.JobID)
+		metrics.JobRunsTotal.WithLabelValues(jobIDStr, jobDetails.JobName, req.ConnectorType, "failed").Inc()
+		metrics.JobFailuresTotal.WithLabelValues(jobIDStr, jobDetails.JobName, req.ConnectorType, errorType).Inc()
+		metrics.SyncDurationSeconds.WithLabelValues(jobIDStr, jobDetails.JobName, req.ConnectorType, "failed").Observe(syncDuration)
+
+		// Build the full message that will survive the Temporal serialisation boundary.
+		// err.Error() from PodFailureError already contains reason and exit code.
+		// We append pod logs here because the cause chain is not reliably accessible
+		// across the workflow→activity boundary via errors.As.
+		var msgParts []string
+		msgParts = append(msgParts, err.Error())
+		if podErr != nil && podErr.PodLogs != "" {
+			msgParts = append(msgParts, "\n--- Pod Logs (last output before failure) ---\n"+notifications.TailLines(podErr.PodLogs, 30))
+		}
+		fullMsg := strings.Join(msgParts, "\n")
+
+		// Capture to sentry with the classified error type. The catch-all
+		// interceptor skips ApplicationErrors, so this is the single capture
+		// point for classified sync failures.
+		sentryExtras := map[string]interface{}{}
+		if podErr != nil && podErr.PodLogs != "" {
+			sentryExtras["pod_log_tail"] = notifications.TailLines(podErr.PodLogs, 50)
+		}
+		telemetry.CaptureError(err, map[string]string{
+			"connector_type": req.ConnectorType,
+			"job_id":         jobIDStr,
+			"job_name":       jobDetails.JobName,
+			"error_type":     errorType,
+		}, sentryExtras)
+
+		log.Error("sync command failed", "jobID", req.JobID, "errorType", errorType, "error", err)
+		return nil, temporal.NewNonRetryableApplicationError(fullMsg, errorType, err)
 	}
+
+	metrics.SyncDurationSeconds.WithLabelValues(
+		strconv.Itoa(req.JobID), jobDetails.JobName, req.ConnectorType, "success",
+	).Observe(syncDuration)
 
 	return result, nil
 }
@@ -124,8 +186,57 @@ func (a *Activity) PostSyncActivity(ctx context.Context, req *types.ExecutionReq
 		return temporal.NewNonRetryableApplicationError(err.Error(), "cleanup failed", err)
 	}
 
+	// The workflow must stay deterministic, so the "sync failed" sentry event
+	// is emitted here on the activity side from the SyncFailed flag the
+	// workflow plumbed into cleanup.
+	if req.SyncFailed {
+		telemetry.CaptureErrorMessage("sync failed: "+jobDetails.JobName, map[string]string{
+			"connector_type": req.ConnectorType,
+			"job_id":         strconv.Itoa(req.JobID),
+			"job_name":       jobDetails.JobName,
+		})
+	}
+
+	// Increment Prometheus success counter. jobDetails is non-nil (fetched above).
+	// This cleanup activity runs on every outcome (failure and cancellation
+	// included), so success-only metrics are gated on the sync result the
+	// workflow plumbed through req.SyncFailed.
+	if !req.SyncFailed {
+		metrics.JobRunsTotal.WithLabelValues(
+			strconv.Itoa(req.JobID), jobDetails.JobName, req.ConnectorType, "success",
+		).Inc()
+
+		// Best-effort: read record count from the stats.json the CLI wrote to the
+		// shared volume. Never fails the activity — a missing file just means no
+		// records metric for this run.
+		if records, err := readSyncedRecords(req.WorkflowID, req.Command); err != nil {
+			log.Warn("could not read synced records from stats.json", "jobID", req.JobID, "error", err)
+		} else {
+			metrics.RecordsSyncedTotal.WithLabelValues(
+				strconv.Itoa(req.JobID), jobDetails.JobName, req.ConnectorType,
+			).Add(records)
+		}
+	}
+
 	telemetry.SendEvent(req.JobID, utils.GetExecutorEnvironment(), req.WorkflowID, telemetry.TelemetryEventCompleted)
 	return nil
+}
+
+// readSyncedRecords parses "Synced Records" from the stats.json written every
+// 2s by the olake CLI at the root of the job's shared-volume directory.
+func readSyncedRecords(workflowID string, command types.Command) (float64, error) {
+	_, workdir := utils.GetWorkflowDirAndSubDir(workflowID, command)
+	data, err := os.ReadFile(filepath.Join(workdir, "stats.json"))
+	if err != nil {
+		return 0, err
+	}
+	var stats struct {
+		SyncedRecords float64 `json:"Synced Records"`
+	}
+	if err := json.Unmarshal(data, &stats); err != nil {
+		return 0, err
+	}
+	return stats.SyncedRecords, nil
 }
 
 // CRITICAL: Restore the schedule to its normal sync operation state

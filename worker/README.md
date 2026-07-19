@@ -220,6 +220,20 @@ curl http://localhost:8090/health
 curl http://localhost:8090/ready
 ```
 
+### Metrics
+
+Prometheus metrics are exposed at `http://localhost:8090/metrics`:
+
+| Metric                        | Type      | Description                                              |
+|-------------------------------|-----------|----------------------------------------------------------|
+| `olake_job_runs_total`        | counter   | Sync job runs, partitioned by outcome (`status` label)   |
+| `olake_job_failures_total`    | counter   | Sync job failures, partitioned by `error_type`           |
+| `olake_sync_duration_seconds` | histogram | Wall-clock sync duration, partitioned by `status`        |
+| `olake_records_synced_total`  | counter   | Records synced per run, read from the CLI's `stats.json` |
+
+All metrics carry `job_id`, `job_name`, and `connector_type` labels. Standard Go runtime
+metrics are included as well. See `worker/metrics/metrics.go` for example PromQL queries.
+
 ### Logging
 
 Structured JSON logging with configurable levels:

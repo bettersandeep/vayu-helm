@@ -52,8 +52,15 @@ func (d *DockerExecutor) Execute(ctx context.Context, req *types.ExecutionReques
 	}
 
 	// Environment variables propagation
+	envVars := utils.GetWorkerEnvVars()
+	// The connector must report to the drivers sentry project, not the
+	// worker's: replace the worker's SENTRY_DSN with SENTRY_DSN_DRIVERS.
+	delete(envVars, "SENTRY_DSN")
+	if dsn := envVars["SENTRY_DSN_DRIVERS"]; dsn != "" {
+		envVars["SENTRY_DSN"] = dsn
+	}
 	var envs []string
-	for k, v := range utils.GetWorkerEnvVars() {
+	for k, v := range envVars {
 		envs = append(envs, fmt.Sprintf("%s=%s", k, v))
 	}
 

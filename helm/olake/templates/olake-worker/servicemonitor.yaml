@@ -1,0 +1,26 @@
+{{- if .Values.olakeWorker.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: olake-workers
+  namespace: {{ include "olake.namespace" . }}
+  labels:
+    {{- include "olake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: workers
+spec:
+  # Select the olake-workers Service in this release's namespace.
+  # The Service exposes port 8090 (named "health") which now serves
+  # Prometheus text exposition format at /metrics.
+  selector:
+    matchLabels:
+      olake.io/part-of: olake
+      app.kubernetes.io/component: workers
+  namespaceSelector:
+    matchNames:
+      - {{ include "olake.namespace" . }}
+  endpoints:
+    - port: health
+      path: /metrics
+      interval: {{ .Values.olakeWorker.metrics.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.olakeWorker.metrics.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}

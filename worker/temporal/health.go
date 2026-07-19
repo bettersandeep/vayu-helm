@@ -9,6 +9,7 @@ import (
 	"github.com/datazip-inc/olake-helm/worker/database"
 	"github.com/datazip-inc/olake-helm/worker/utils"
 	"github.com/datazip-inc/olake-helm/worker/utils/logger"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const healthPort = 8090
@@ -42,7 +43,10 @@ func NewHealthServer(worker *Worker, db *database.DB) *Server {
 	// Endpoints: align with old worker
 	mux.HandleFunc("/health", hs.healthHandler)
 	mux.HandleFunc("/ready", hs.readinessHandler)
-	mux.HandleFunc("/metrics", hs.metricsHandler)
+	// /metrics exposes Prometheus text exposition format, scrapeable by kube-prometheus.
+	// The default registry includes Go runtime metrics (GC, goroutines, memory) in addition
+	// to the olake_* metrics registered in the metrics package.
+	mux.Handle("/metrics", promhttp.Handler())
 
 	return hs
 }
@@ -123,14 +127,4 @@ func (hs *Server) readinessHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
-}
-
-// Metrics: align shape with old worker
-func (hs *Server) metricsHandler(w http.ResponseWriter, _ *http.Request) {
-	metrics := map[string]interface{}{
-		"worker_status":  "running",
-		"uptime_seconds": time.Since(hs.startTime).Seconds(),
-		"timestamp":      time.Now(),
-	}
-	writeJSON(w, http.StatusOK, metrics)
 }

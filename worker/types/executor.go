@@ -25,6 +25,7 @@ type ExecutionRequest struct {
 	Timeout       time.Duration `json:"timeout"`
 	OutputFile    string        `json:"output_file"`
 	TempPath      string        `json:"temp_path"`
+	SyncFailed    bool          `json:"sync_failed"`
 
 	// k8s specific fields
 	HeartbeatFunc func(context.Context, ...interface{}) `json:"-"`
