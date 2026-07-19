@@ -1,3 +1,10 @@
+> ### 🌀 Vayu fork
+> A customized fork of **[datazip-inc/olake-helm](https://github.com/datazip-inc/olake-helm)**, based on upstream **v0.3.10**.
+> Adds worker Sentry instrumentation, Prometheus metrics, and deployment config plumbing.
+> See **[VAYU.md](./VAYU.md)** for fork details and **[CHANGELOG.md](./CHANGELOG.md)** for the release history.
+> The upstream README follows below, unchanged.
+
+---
 # OLake Helm Chart
 
 <h1 align="center" style="border-bottom: none">
