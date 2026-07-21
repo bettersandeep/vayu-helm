@@ -58,4 +58,26 @@ spec:
   selector:
     app.kubernetes.io/name: {{ include "olake.name" . }}-fusion
     app.kubernetes.io/instance: {{ .Release.Name }}
+
+{{- if .Values.fusion.metrics.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "olake.fullname" . }}-fusion-metrics
+  namespace: {{ include "olake.namespace" . }}
+  labels:
+    {{- include "olake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fusion-metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.fusion.metrics.port }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ include "olake.name" . }}-fusion
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
 {{- end }}

@@ -93,6 +93,15 @@ data:
           {{ $key }}: "{{ $value }}"
           {{- end }}
 
+  {{- if .Values.fusion.metrics.enabled }}
+  metric-reporters.yaml: |
+    metric-reporters:
+      - name: prometheus-exporter
+        enabled: true
+        properties:
+          port: {{ .Values.fusion.metrics.port }}
+  {{- end }}
+
   pod-template.yaml: |
     apiVersion: v1
     kind: Pod

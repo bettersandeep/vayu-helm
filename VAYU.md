@@ -15,7 +15,13 @@ covering the worker and the Helm chart. This document tracks what the fork adds 
   resources via env variables, configurable container registry base, JVM tuning.
 - **Helm wiring** - Sentry DSN/environment injection into ui/worker/fusion, `SENTRY_RELEASE`
   derived from image tags.
-- **Chart version** - reset to the vayu release line (chart `0.1.0`).
+- **Fusion metrics** - optional Amoro prometheus-exporter (values-gated, default off), a
+  fusion-metrics Service, and a ServiceMonitor; surfaces optimizer instance/thread gauges for
+  dead-optimizer alerting.
+- **Fusion maintenance** - AMS server-level expire-snapshots, clean-orphan-files, and
+  clean-dangling-delete-files executors (values-gated, default on) so per-table properties reclaim
+  object storage.
+- **Chart version** - vayu release line (chart `0.2.0`).
 
 ## Platform release manifest
 

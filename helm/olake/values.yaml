@@ -726,6 +726,24 @@ fusion:
     identifier: "default"
     sensitiveKeywords: "admin-password;database.password"
 
+  # -- Fusion (Amoro AMS) metrics
+  metrics:
+    # -- Enable Amoro's built-in Prometheus exporter plugin. When true, AMS starts
+    # an HTTP exporter on `port` serving /metrics with amoro_* gauges, including
+    # optimizer_group_optimizer_instances and optimizer_group_threads per group
+    # (used to alert on a dead optimizer via `== 0`).
+    enabled: false
+    # -- Port the Amoro prometheus-exporter listens on inside the fusion pod.
+    port: 9090
+    serviceMonitor:
+      # -- Enable creation of a Prometheus Operator ServiceMonitor for fusion.
+      # Requires metrics.enabled=true and the Prometheus Operator CRDs.
+      enabled: false
+      # -- How often Prometheus scrapes the /metrics endpoint
+      interval: 30s
+      # -- Per-scrape timeout (must be less than interval)
+      scrapeTimeout: 10s
+
   # --- Optimizer configuration (Spark-on-Kubernetes)
   optimizer:
     spark:
