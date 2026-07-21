@@ -25,6 +25,21 @@ data:
         task-execute-timeout: 1h
         max-planning-parallelism: {{ .Values.fusion.optimizer.spark.desiredParallelism }}
 
+      {{- with .Values.fusion.maintenance }}
+      # AMS server-level maintenance executors. These physically reclaim storage;
+      # per-table table-expire/clean-orphan-file properties do nothing without them.
+      # All default off in Amoro, enabled here.
+      expire-snapshots:
+        enabled: {{ .expireSnapshots.enabled }}
+        interval: {{ .expireSnapshots.interval }}
+      clean-orphan-files:
+        enabled: {{ .cleanOrphanFiles.enabled }}
+        interval: {{ .cleanOrphanFiles.interval }}
+      clean-dangling-delete-files:
+        enabled: {{ .cleanDanglingDeleteFiles.enabled }}
+        interval: {{ .cleanDanglingDeleteFiles.interval }}
+      {{- end }}
+
       {{- if or .Values.fusion.shade.identifier .Values.fusion.shade.sensitiveKeywords }}
       shade:
         {{- if .Values.fusion.shade.identifier }}
@@ -92,6 +107,15 @@ data:
           {{- range $key, $value := .Values.fusion.optimizer.spark.properties }}
           {{ $key }}: "{{ $value }}"
           {{- end }}
+
+  {{- if .Values.fusion.metrics.enabled }}
+  metric-reporters.yaml: |
+    metric-reporters:
+      - name: prometheus-exporter
+        enabled: true
+        properties:
+          port: {{ .Values.fusion.metrics.port }}
+  {{- end }}
 
   pod-template.yaml: |
     apiVersion: v1

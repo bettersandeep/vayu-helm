@@ -6,12 +6,12 @@
 # maps to `-` for container image tags (Docker tags cannot contain `+`),
 # e.g. git `vayu-0.1.0+olake0.8.2` -> image `vayu-0.1.0-olake0.8.2`.
 
-vayuPlatform: 0.1.0
+vayuPlatform: 0.2.0
 
 components:
   driver:  vayu-0.1.0+olake0.8.2    # vayu (olake core / connectors)
   ui:      vayu-0.1.0+olake0.4.9    # vayu-ui
-  worker:  vayu-0.1.0+olake0.3.10   # vayu-helm (worker + chart)
+  worker:  vayu-0.2.0+olake0.3.10   # vayu-helm (worker + chart)
   fusion:  vayu-0.1.0+olake0.1.3    # vayu-fusion (amoro)
 
 upstreamBase:

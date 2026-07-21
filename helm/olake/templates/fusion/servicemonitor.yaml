@@ -1,0 +1,25 @@
+{{- if and .Values.fusion.enabled .Values.fusion.metrics.enabled .Values.fusion.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "olake.fullname" . }}-fusion
+  namespace: {{ include "olake.namespace" . }}
+  labels:
+    {{- include "olake.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fusion-metrics
+spec:
+  # Select the fusion metrics Service in this release's namespace. The Service
+  # exposes port "metrics" which serves Amoro's Prometheus exporter at /metrics.
+  selector:
+    matchLabels:
+      olake.io/part-of: olake
+      app.kubernetes.io/component: fusion-metrics
+  namespaceSelector:
+    matchNames:
+      - {{ include "olake.namespace" . }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.fusion.metrics.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.fusion.metrics.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}

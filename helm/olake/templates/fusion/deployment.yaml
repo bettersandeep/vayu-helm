@@ -312,6 +312,10 @@ spec:
               containerPort: 1260
             - name: optimizing
               containerPort: 1261
+            {{- if .Values.fusion.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.fusion.metrics.port }}
+            {{- end }}
           volumeMounts:
             - name: fusion-config
               mountPath: /usr/local/amoro/conf/config.yaml
@@ -319,6 +323,11 @@ spec:
             - name: fusion-config
               mountPath: /usr/local/amoro/conf/pod-template.yaml
               subPath: pod-template.yaml
+            {{- if .Values.fusion.metrics.enabled }}
+            - name: fusion-config
+              mountPath: /usr/local/amoro/conf/plugins/metric-reporters.yaml
+              subPath: metric-reporters.yaml
+            {{- end }}
             - name: spark-binaries
               mountPath: /opt/spark
             - name: shared-storage
